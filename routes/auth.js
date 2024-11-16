@@ -1,18 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 const Employee = require('../models/Employee');
+
 
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
     console.log('Login attempt:', { email });
+    
+    if (!email || !password) {
+      console.log('Missing credentials');
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
     // Admin login check
-    if (email === 'admin@gmail.com' && password === 'admin123') {
+    if (email.toLowerCase() === 'admin@gmail.com' && password === 'admin123') {
       const token = jwt.sign(
-        { id: 'admin', email, role: 'admin', name: 'Admin' },
+        { id: 'admin', role: 'admin' },
         process.env.JWT_SECRET,
         { expiresIn: '1d' }
       );
@@ -22,130 +30,266 @@ router.post('/login', async (req, res) => {
         token,
         user: {
           id: 'admin',
-          email,
+          name: 'Admin',
+          email: 'admin@gmail.com',
           role: 'admin',
-          name: 'Admin'
-        }
+        },
       });
     }
 
-    // Employee login check
-    const employee = await Employee.findOne({ email });
-    console.log('Found employee:', employee ? 'yes' : 'no');
-    
-    if (!employee) {
-      console.log('No employee found with email:', email);
+    // First check Employee model
+    let user = await Employee.findOne({ email: email.toLowerCase() });
+    let isEmployee = true;
+
+    // If not found in Employee, check User model
+    if (!user) {
+      user = await User.findOne({ email: email.toLowerCase() });
+      isEmployee = false;
+    }
+
+    if (!user) {
+      console.log('User not found:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    // Log password comparison
-    console.log('Comparing passwords...');
-    const isMatch = await bcrypt.compare(password, employee.password);
-    console.log('Password match:', isMatch ? 'yes' : 'no');
-    
+    // Verify password exists
+    if (!user.password) {
+      console.error('User has no password set:', email);
+      return res.status(401).json({ message: 'Password not set for user' });
+    }
+
+    // Log the retrieved password for debugging (remove in production)
+    console.log('Retrieved password from database:', user.password);
+
+    // Compare passwords
+    const isMatch = await bcrypt.compare(password, user.password);
+    console.log('Password match:', isMatch ? 'Yes' : 'No');
+
     if (!isMatch) {
-      console.log('Password does not match for email:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     // Create token
     const token = jwt.sign(
-      {
-        id: employee._id,
-        email: employee.email,
-        role: employee.role,
-        name: employee.name
+      { 
+        id: user._id.toString(),
+        role: user.role,
+        isEmployee: isEmployee 
       },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
 
-    // Log successful login
-    console.log('Login successful for:', email, 'with role:', employee.role);
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isEmployee: isEmployee
+      },
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update the registration route to properly hash passwords
+router.post('/register', async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    // Validate role
+    const validRoles = ['hr', 'manager', 'ceo', 'employee'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ message: 'Invalid role specified' });
+    }
+
+    // Check if user already exists
+    let user = await User.findOne({ email: email.toLowerCase() });
+    if (user) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Hash password before creating user
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create new user with hashed password
+    user = new User({
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role
+    });
+
+    await user.save();
+    console.log('User created successfully:', {
+      email: user.email,
+      role: user.role
+    });
+
+    // Create token
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
 
     res.json({
       success: true,
       token,
       user: {
-        id: employee._id,
-        email: employee.email,
-        name: employee.name,
-        role: employee.role,
-        designation: employee.designation
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
       }
     });
 
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error during login' });
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
+// Consolidate password reset into one route
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, newPassword } = req.body;
     
-    // Find employee
-    const employee = await Employee.findOne({ email });
-    if (!employee) {
-      return res.status(404).json({ message: 'Employee not found' });
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    // Hash new password
+    // Hash the new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // Update password
-    employee.password = hashedPassword;
-    await employee.save();
+    // Update user's password
+    user.password = hashedPassword;
+    await user.save();
 
-    res.json({ success: true, message: 'Password reset successful' });
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully'
+    });
+
   } catch (error) {
     console.error('Password reset error:', error);
-    res.status(500).json({ message: 'Server error during password reset' });
-  }
-});
-
-// TEMPORARY ROUTE - Remove in production
-router.get('/check-credentials/:email', async (req, res) => {
-  try {
-    const employee = await Employee.findOne({ email: req.params.email });
-    if (!employee) {
-      return res.json({ exists: false });
-    }
-    res.json({
-      exists: true,
-      employee: {
-        email: employee.email,
-        name: employee.name,
-        hashedPassword: employee.password
-      }
-    });
-  } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// TEST ROUTE - Remove in production
-router.get('/test-credentials/:email', async (req, res) => {
+// Add a verification route
+router.get('/verify/:email', async (req, res) => {
   try {
-    const employee = await Employee.findOne({ email: req.params.email });
-    if (!employee) {
-      return res.json({ exists: false });
+    const user = await User.findOne({ email: req.params.email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
     res.json({
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      hasPassword: !!user.password,
+      passwordHash: user.password,
+      passwordLength: user.password?.length
+    });
+
+  } catch (error) {
+    console.error('Verification error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Add this temporary debug route
+router.get('/check-user/:email', async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.params.email.toLowerCase() });
+    if (!user) {
+      return res.json({ exists: false });
+    }
+    return res.json({
       exists: true,
-      employee: {
-        email: employee.email,
-        name: employee.name,
-        role: employee.role,
-        hasPassword: !!employee.password
-      }
+      hasPassword: !!user.password,
+      // Don't send the actual password in production!
+      passwordLength: user.password?.length
     });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/list-all-users', async (req, res) => {
+  try {
+    const users = await User.find().select('-password');
+    const employees = await Employee.find().select('-password');
+
+    res.json({ users, employees });
+  } catch (error) {
+    console.error('Error fetching users and employees:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-module.exports = router; 
+// Add route for updating user or employee profile
+router.put('/update-profile/:id', async (req, res) => {
+  try {
+    const { name, email, role, image } = req.body; // Extract fields you want to update
+
+    // Validate email format if necessary
+    if (email && !validateEmail(email)) {
+      return res.status(400).json({ message: 'Invalid email format' });
+    }
+
+    // Find the user or employee by their ID
+    let user = await User.findById(req.params.id);
+    if (!user) {
+      user = await Employee.findById(req.params.id); // Check employee if not in User model
+      if (!user) {
+        return res.status(404).json({ message: 'User or Employee not found' });
+      }
+    }
+
+    // Update fields
+    if (name) user.name = name;
+    if (email) user.email = email.toLowerCase(); // Ensure email is lowercase
+    if (role) user.role = role;
+    if (image) user.image = image; // Handle image upload (URL or base64 depending on your setup)
+
+    // Save updated user data
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        image: user.image, // Send updated image (if applicable)
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Helper function to validate email (optional)
+function validateEmail(email) {
+  const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  return regex.test(email);
+}
+
+
+
+module.exports = router;

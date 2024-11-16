@@ -6,6 +6,8 @@ const multer = require('multer');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const roleAuth = require('../middleware/roleAuth');
+const mongoose = require('mongoose');
+const User = require('../models/User');
 
 // Configure multer for image upload
 const storage = multer.diskStorage({
@@ -99,26 +101,33 @@ router.get('/search', auth, async (req, res) => {
 });
 
 // Create new employee
-router.post('/', [auth, roleAuth('admin', 'HR')], upload.single('image'), async (req, res) => {
+router.post('/', [auth, roleAuth('admin', 'hr')], upload.single('image'), async (req, res) => {
   try {
-    const { password, ...otherData } = req.body;
+    const { password, role, ...otherData } = req.body;
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const employeeData = {
-      ...otherData,
-      password: hashedPassword,
-      image: req.file ? req.file.filename : null,
-      role: 'employee'
-    };
-
-    if (typeof employeeData.courses === 'string') {
-      employeeData.courses = JSON.parse(employeeData.courses);
+    // Validate password
+    if (!password || password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
     }
 
-    const employee = new Employee(employeeData);
+    // Validate role
+    const validRoles = ['employee', 'hr', 'manager', 'ceo'];
+    const normalizedRole = role ? role.toLowerCase() : 'employee';
+
+    if (!validRoles.includes(normalizedRole)) {
+      return res.status(400).json({ 
+        message: 'Invalid role specified. Valid roles are: employee, hr, manager, ceo' 
+      });
+    }
+
+    // Create new employee (password will be hashed by pre-save middleware)
+    const employee = new Employee({
+      ...otherData,
+      password,
+      role: normalizedRole,
+      image: req.file ? req.file.filename : null
+    });
+
     await employee.save();
 
     res.status(201).json({
@@ -128,12 +137,10 @@ router.post('/', [auth, roleAuth('admin', 'HR')], upload.single('image'), async 
         password: undefined
       }
     });
+
   } catch (error) {
     console.error('Error creating employee:', error);
-    res.status(400).json({ 
-      message: 'Error creating employee', 
-      error: error.message 
-    });
+    res.status(400).json({ message: error.message });
   }
 });
 
@@ -295,17 +302,95 @@ router.get('/hr-stats', [auth, roleAuth('HR')], async (req, res) => {
 });
 
 // Manager Stats
-router.get('/manager-stats', [auth, roleAuth('Manager')], async (req, res) => {
+router.get('/manager-stats', auth, async (req, res) => {
   try {
-    const teamMembers = await Employee.countDocuments({ designation: 'Employee' });
-    
-    res.json({
-      teamMembers,
-      projects: [],
-      performance: {}
+    // Debug logging
+    console.log('Request received for manager-stats');
+    console.log('Auth token user:', req.user);
+
+    // Validate user
+    if (!req.user || !req.user.id) {
+      console.log('No user found in request');
+      return res.status(401).json({ 
+        message: 'Authentication required',
+        error: 'No user found in request'
+      });
+    }
+
+    // Basic validation of the ID
+    if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+      console.log('Invalid user ID format:', req.user.id);
+      return res.status(400).json({
+        message: 'Invalid user ID format',
+        error: 'The provided user ID is not valid'
+      });
+    }
+
+    // Get the manager's ID
+    const managerId = req.user.id;
+    console.log('Looking up stats for manager:', managerId);
+
+    // First, verify the manager exists
+    const manager = await Employee.findById(managerId);
+    if (!manager) {
+      console.log('Manager not found in database');
+      return res.status(404).json({
+        message: 'Manager not found',
+        error: 'No employee found with the provided ID'
+      });
+    }
+
+    // Get team members count
+    const teamMembersCount = await Employee.countDocuments({ managerId });
+    console.log('Team members count:', teamMembersCount);
+
+    // Get active team members count
+    const activeTeamMembersCount = await Employee.countDocuments({
+      managerId,
+      status: 'active'
     });
+    console.log('Active team members count:', activeTeamMembersCount);
+
+    // Get department breakdown
+    const departmentBreakdown = await Employee.aggregate([
+      { $match: { managerId: mongoose.Types.ObjectId(managerId) } },
+      {
+        $group: {
+          _id: '$department',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    console.log('Department breakdown:', departmentBreakdown);
+
+    // Prepare response
+    const response = {
+      managerId,
+      stats: {
+        total: teamMembersCount,
+        active: activeTeamMembersCount,
+        inactive: teamMembersCount - activeTeamMembersCount
+      },
+      departmentBreakdown,
+      timestamp: new Date()
+    };
+
+    console.log('Sending response:', response);
+    res.json(response);
+
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error in manager-stats:', error);
+    console.error('Error stack:', error.stack);
+    
+    // Send a more detailed error response
+    res.status(500).json({
+      message: 'Error fetching manager stats',
+      error: {
+        message: error.message,
+        type: error.name,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }
+    });
   }
 });
 
@@ -320,6 +405,51 @@ router.get('/ceo-stats', [auth, roleAuth('CEO')], async (req, res) => {
       departments,
       performance: {},
       growth: {}
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// TEMPORARY ROUTE - Remove in production
+router.post('/reset-test-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const employee = await Employee.findOne({ email });
+    
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // Set password to "123456" for testing
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash("123456", salt);
+    
+    employee.password = hashedPassword;
+    await employee.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Password reset to 123456',
+      passwordHash: hashedPassword
+    });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// TEMPORARY ROUTE - Remove in production
+router.get('/check-password/:email', async (req, res) => {
+  try {
+    const employee = await Employee.findOne({ email: req.params.email });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+    
+    res.json({
+      passwordHash: employee.password,
+      passwordLength: employee.password.length
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });

@@ -22,9 +22,26 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['admin', 'employee'],
+    enum: ['admin', 'hr', 'manager', 'ceo', 'employee'],
     default: 'employee'
-  }
+  },
+  mobile:{
+    type: String,
+    required: true
+  },
+  designation:{
+    type: String,
+    required: true
+  },
+  gender: {
+    type: String,
+    required: true
+  },
+  image:{
+    type: String,
+    required: true
+  },
+
 }, {
   timestamps: true
 });
@@ -36,8 +53,10 @@ userSchema.pre('save', async function(next) {
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
+    console.log('Password hashed successfully');
     next();
   } catch (error) {
+    console.error('Password hashing error:', error);
     next(error);
   }
 });
