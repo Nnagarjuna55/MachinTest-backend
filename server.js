@@ -12,6 +12,12 @@ const taskRoutes = require('./routes/tasks');
 const leaveRoutes = require('./routes/leaves');
 const attendanceRoutes = require('./routes/attendance');
 const payrollRoutes = require('./routes/payroll');
+const departmentRoutes = require('./routes/department');
+const performanceRoutes = require('./routes/performance');
+const trainingRoutes = require('./routes/training');
+const reportsRoutes = require('./routes/reports');
+const managerRoutes = require('./routes/manager');
+const healthRoutes = require('./routes/health');
 const path = require('path');
 const app = express();
 
@@ -39,7 +45,13 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/attendance', attendanceRoutes);
-app.use('/api/payslips', payrollRoutes);
+app.use('/api/payroll', payrollRoutes);
+app.use('/api/department', departmentRoutes);
+app.use('/api/performance', performanceRoutes);
+app.use('/api/training', trainingRoutes);
+app.use('/api/reports', reportsRoutes);
+app.use('/api/manager', managerRoutes);
+app.use('/api/health', healthRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

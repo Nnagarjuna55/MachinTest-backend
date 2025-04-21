@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
 
 const employeeSchema = new mongoose.Schema({
   name: {
@@ -45,6 +46,21 @@ const employeeSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Hash password before saving
+employeeSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next(); // Ensure hashing only if password is modified
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt); // Hash the password
+    console.log('Password hashed successfully');
+    next();
+  } catch (error) {
+    console.error('Password hashing error:', error);
+    next(error);
+  }
 });
 
 module.exports = mongoose.model('Employee', employeeSchema); 

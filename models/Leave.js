@@ -11,14 +11,23 @@ const leaveSchema = new mongoose.Schema({
     enum: ['casual', 'sick', 'annual'],
     required: true
   },
-  startDate: Date,
-  endDate: Date,
+  startDate: {
+    type: Date,
+    required: true
+  },
+  endDate: {
+    type: Date,
+    required: true
+  },
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
     default: 'pending'
   },
-  reason: String
+  reason: {
+    type: String,
+    required: true
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Leave', leaveSchema); 

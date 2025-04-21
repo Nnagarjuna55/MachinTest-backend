@@ -1,17 +1,16 @@
-// Test connection endpoint
-router.get('/test-connection', (req, res) => {
-  res.json({ message: 'Connection successful' });
-});
+const express = require('express');
+const router = express.Router();
+const healthRoutes = require('./health'); // Ensure this is imported
+const leaveRoutes = require('./leaves'); // Ensure this is imported
+const attendanceRoutes = require('./attendance'); // Ensure this is imported
+const payrollRoutes = require('./payroll'); // Ensure this is imported
 
-// Manager routes
-router.get('/manager/team', auth, async (req, res) => {
-  try {
-    const team = await Employee.find({ managerId: req.user.id });
-    res.json(team);
-  } catch (err) {
-    console.error('Error fetching team:', err);
-    res.status(500).json({ message: 'Error fetching team data' });
-  }
-});
+// Register health route
+router.use('/health', healthRoutes);
 
-// ... other routes ... 
+// Register other routes
+router.use('/leaves', leaveRoutes);
+router.use('/attendance', attendanceRoutes);
+router.use('/payroll', payrollRoutes);
+
+module.exports = router;
